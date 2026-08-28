@@ -1,0 +1,35 @@
+# База данных
+*.db
+*.sqlite
+*.sqlite3
+*.db3
+
+# Логи
+*.log
+
+# Временные файлы
+*.tmp
+*.temp
+
+# Файлы настроек с паролями
+.env
+.env.local
+config.py
+secrets.py
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Папки с зависимостями
+node_modules/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Файлы IDE
+.vscode/
+.idea/
+*.swp
+*.swo
