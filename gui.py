@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from tkinter import BOTH, END, LEFT, RIGHT, WORD, StringVar, Tk, Toplevel, messagebox, ttk
+from datetime import date, datetime, timedelta
+from tkinter import BOTH, BooleanVar, END, LEFT, RIGHT, WORD, StringVar, Tk, Toplevel, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from database import (
     ALL_STATUSES,
+    REPEAT_DAILY,
+    REPEAT_LABELS,
+    REPEAT_NONE,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_OVERDUE,
@@ -37,8 +40,8 @@ class ReminderApp:
 
     def _build_ui(self) -> None:
         self.root.title("Напоминания")
-        self.root.geometry("920x620")
-        self.root.minsize(780, 520)
+        self.root.geometry("980x680")
+        self.root.minsize(860, 560)
 
         style = ttk.Style(self.root)
         if "vista" in style.theme_names():
@@ -83,7 +86,7 @@ class ReminderApp:
         self.title_entry.pack(fill="x", pady=(0, 8))
 
         ttk.Label(form, text="Описание").pack(anchor="w")
-        self.description = ScrolledText(form, height=8, wrap=WORD, font=("Segoe UI", 10))
+        self.description = ScrolledText(form, height=6, wrap=WORD, font=("Segoe UI", 10))
         self.description.pack(fill=BOTH, expand=True, pady=(0, 8))
 
         when = ttk.Frame(form)
@@ -98,6 +101,39 @@ class ReminderApp:
         ttk.Entry(when, textvariable=self.time_var, width=10).grid(row=1, column=1, sticky="ew", padx=(8, 0))
         when.columnconfigure(0, weight=1)
         when.columnconfigure(1, weight=1)
+
+        repeat = ttk.Labelframe(form, text="Повтор", padding=8)
+        repeat.pack(fill="x", pady=(0, 8))
+        self.repeat_enabled = BooleanVar(value=False)
+        ttk.Checkbutton(
+            repeat,
+            text="Повторяющаяся задача",
+            variable=self.repeat_enabled,
+            command=self._sync_repeat_fields,
+        ).pack(anchor="w")
+
+        repeat_row = ttk.Frame(repeat)
+        repeat_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(repeat_row, text="Регулярность").grid(row=0, column=0, sticky="w")
+        ttk.Label(repeat_row, text="До даты (ДД.ММ.ГГГГ)").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.repeat_rule_var = StringVar(value=REPEAT_LABELS[REPEAT_DAILY])
+        self.repeat_rule_box = ttk.Combobox(
+            repeat_row,
+            textvariable=self.repeat_rule_var,
+            values=tuple(REPEAT_LABELS.values()),
+            state="disabled",
+            width=18,
+        )
+        self.repeat_rule_box.grid(row=1, column=0, sticky="ew")
+        self.repeat_until_var = StringVar(
+            value=(now_local() + timedelta(days=30)).strftime("%d.%m.%Y")
+        )
+        self.repeat_until_entry = ttk.Entry(
+            repeat_row, textvariable=self.repeat_until_var, width=16, state="disabled"
+        )
+        self.repeat_until_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        repeat_row.columnconfigure(0, weight=1)
+        repeat_row.columnconfigure(1, weight=1)
 
         ttk.Button(form, text="Добавить напоминание", command=self.add_reminder).pack(
             fill="x", pady=(4, 0)
@@ -117,14 +153,29 @@ class ReminderApp:
         self.filter_box.bind("<<ComboboxSelected>>", lambda _e: self.refresh_list())
         ttk.Button(toolbar, text="Обновить", command=self.refresh_list).pack(side=LEFT)
 
-        columns = ("due", "status", "title")
+        stats = ttk.Frame(list_frame)
+        stats.pack(fill="x", pady=(0, 8))
+        self.stat_total = ttk.Label(stats, text="Всего: 0")
+        self.stat_total.pack(side=LEFT, padx=(0, 12))
+        self.stat_pending = ttk.Label(stats, text="Ожидает: 0", foreground="#2563eb")
+        self.stat_pending.pack(side=LEFT, padx=(0, 12))
+        self.stat_done = ttk.Label(stats, text="Готово: 0", foreground="#15803d")
+        self.stat_done.pack(side=LEFT, padx=(0, 12))
+        self.stat_overdue = ttk.Label(stats, text="Просрочено: 0", foreground="#dc2626")
+        self.stat_overdue.pack(side=LEFT, padx=(0, 12))
+        self.stat_cancelled = ttk.Label(stats, text="Отменено: 0", foreground="#c2410c")
+        self.stat_cancelled.pack(side=LEFT)
+
+        columns = ("due", "status", "repeat", "title")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
         self.tree.heading("due", text="Дата и время")
         self.tree.heading("status", text="Статус")
+        self.tree.heading("repeat", text="Повтор")
         self.tree.heading("title", text="Заголовок")
         self.tree.column("due", width=140, stretch=False)
         self.tree.column("status", width=110, stretch=False)
-        self.tree.column("title", width=280)
+        self.tree.column("repeat", width=170, stretch=False)
+        self.tree.column("title", width=220)
         self.tree.pack(fill=BOTH, expand=True)
         self.tree.tag_configure(STATUS_DONE, foreground="#15803d")
         self.tree.tag_configure(STATUS_OVERDUE, foreground="#dc2626")
@@ -149,6 +200,12 @@ class ReminderApp:
         self.status_var = StringVar(value="Готово")
         ttk.Label(outer, textvariable=self.status_var).pack(anchor="w", pady=(8, 0))
 
+    def _sync_repeat_fields(self) -> None:
+        state = "readonly" if self.repeat_enabled.get() else "disabled"
+        entry_state = "normal" if self.repeat_enabled.get() else "disabled"
+        self.repeat_rule_box.configure(state=state)
+        self.repeat_until_entry.configure(state=entry_state)
+
     def _parse_due(self) -> datetime:
         date_text = self.date_var.get().strip()
         time_text = self.time_var.get().strip()
@@ -157,12 +214,28 @@ class ReminderApp:
         except ValueError as exc:
             raise ValueError("Укажите дату как ДД.ММ.ГГГГ и время как ЧЧ:ММ") from exc
 
+    def _parse_repeat(self) -> tuple[str, date | None]:
+        if not self.repeat_enabled.get():
+            return REPEAT_NONE, None
+        label_to_rule = {label: rule for rule, label in REPEAT_LABELS.items()}
+        rule = label_to_rule.get(self.repeat_rule_var.get(), "")
+        if not rule:
+            raise ValueError("Выберите регулярность повтора")
+        try:
+            until = datetime.strptime(self.repeat_until_var.get().strip(), "%d.%m.%Y").date()
+        except ValueError as exc:
+            raise ValueError("Конечную дату укажите как ДД.ММ.ГГГГ") from exc
+        return rule, until
+
     def add_reminder(self) -> None:
         title = self.title_var.get().strip()
         description = self.description.get("1.0", END).strip()
         try:
             due_at = self._parse_due()
-            reminder_id = self.store.add(title, description, due_at)
+            repeat_rule, repeat_until = self._parse_repeat()
+            reminder_id = self.store.add(
+                title, description, due_at, repeat_rule=repeat_rule, repeat_until=repeat_until
+            )
         except ValueError as exc:
             messagebox.showerror("Ошибка", str(exc), parent=self.root)
             return
@@ -171,6 +244,8 @@ class ReminderApp:
         later = now_local() + timedelta(minutes=5)
         self.date_var.set(later.strftime("%d.%m.%Y"))
         self.time_var.set(later.strftime("%H:%M"))
+        self.repeat_enabled.set(False)
+        self._sync_repeat_fields()
         self.refresh_list()
         self.status_var.set(f"Добавлено напоминание №{reminder_id}")
 
@@ -185,9 +260,20 @@ class ReminderApp:
         if reminder_id is None:
             messagebox.showinfo("Напоминания", "Выберите напоминание в списке.", parent=self.root)
             return
+        if status == STATUS_DONE:
+            self._complete_reminder(reminder_id)
+            return
         self.store.set_status(reminder_id, status)
         self.refresh_list()
         self.status_var.set(f"Статус изменён на «{status}»")
+
+    def _complete_reminder(self, reminder_id: int) -> None:
+        nxt = self.store.complete(reminder_id)
+        self.refresh_list()
+        if nxt:
+            self.status_var.set(f"Готово. Следующее срабатывание: {nxt.strftime('%d.%m.%Y %H:%M')}")
+        else:
+            self.status_var.set("Статус изменён на «Готово»")
 
     def delete_selected(self) -> None:
         reminder_id = self._selected_id()
@@ -203,6 +289,7 @@ class ReminderApp:
         self.status_var.set("Напоминание удалено")
 
     def refresh_list(self) -> None:
+        selected = self._selected_id()
         for item in self.tree.get_children():
             self.tree.delete(item)
         status = self.filter_var.get()
@@ -212,11 +299,28 @@ class ReminderApp:
                 "",
                 END,
                 iid=str(reminder.id),
-                values=(reminder.due_at_display, reminder.status, reminder.title),
+                values=(
+                    reminder.due_at_display,
+                    reminder.status,
+                    reminder.repeat_display,
+                    reminder.title,
+                ),
                 tags=(reminder.status,),
             )
-        self._set_details("")
+        if selected is not None and self.tree.exists(str(selected)):
+            self.tree.selection_set(str(selected))
+        else:
+            self._set_details("")
+        self._update_stats()
         self.status_var.set(f"Показано: {len(reminders)}")
+
+    def _update_stats(self) -> None:
+        counts = self.store.counts()
+        self.stat_total.configure(text=f"Всего: {counts['Всего']}")
+        self.stat_pending.configure(text=f"Ожидает: {counts[STATUS_PENDING]}")
+        self.stat_done.configure(text=f"Готово: {counts[STATUS_DONE]}")
+        self.stat_overdue.configure(text=f"Просрочено: {counts[STATUS_OVERDUE]}")
+        self.stat_cancelled.configure(text=f"Отменено: {counts[STATUS_CANCELLED]}")
 
     def _show_selected_details(self) -> None:
         reminder_id = self._selected_id()
@@ -230,7 +334,8 @@ class ReminderApp:
         text = (
             f"{reminder.title}\n"
             f"Статус: {reminder.status}\n"
-            f"Срабатывание: {reminder.due_at_display}\n\n"
+            f"Срабатывание: {reminder.due_at_display}\n"
+            f"Повтор: {reminder.repeat_display}\n\n"
             f"{reminder.description or 'Без описания'}"
         )
         self._set_details(text)
@@ -277,8 +382,9 @@ class ReminderApp:
         frame.pack(fill=BOTH, expand=True)
         ttk.Label(frame, text=reminder.title, style="Title.TLabel", wraplength=420).pack(anchor="w")
         ttk.Label(frame, text=f"{reminder.due_at_display}  ·  {reminder.status}").pack(
-            anchor="w", pady=(4, 10)
+            anchor="w", pady=(4, 2)
         )
+        ttk.Label(frame, text=f"Повтор: {reminder.repeat_display}").pack(anchor="w", pady=(0, 10))
         body = ScrolledText(frame, wrap=WORD, height=6, font=("Segoe UI", 10))
         body.pack(fill=BOTH, expand=True)
         body.insert("1.0", reminder.description or "Без описания")
@@ -296,6 +402,17 @@ class ReminderApp:
             popup.destroy()
 
         def mark(status: str) -> None:
+            if status == STATUS_DONE:
+                nxt = self.store.complete(reminder.id)
+                self.refresh_list()
+                if nxt:
+                    self.status_var.set(
+                        f"Готово. Следующее срабатывание: {nxt.strftime('%d.%m.%Y %H:%M')}"
+                    )
+                else:
+                    self.status_var.set("Статус изменён на «Готово»")
+                close()
+                return
             self.store.set_status(reminder.id, status)
             self.refresh_list()
             close()
