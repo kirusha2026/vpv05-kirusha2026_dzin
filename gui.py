@@ -10,6 +10,8 @@ from database import (
     ALL_STATUSES,
     STATUS_CANCELLED,
     STATUS_DONE,
+    STATUS_OVERDUE,
+    STATUS_PENDING,
     Reminder,
     ReminderStore,
     now_local,
@@ -43,6 +45,20 @@ class ReminderApp:
             style.theme_use("vista")
         style.configure("Title.TLabel", font=("Segoe UI", 16, "bold"))
         style.configure("Heading.TLabel", font=("Segoe UI", 10, "bold"))
+        # На Windows тема перебивает цвета тегов Treeview — оставляем только selected
+        style.map(
+            "Treeview",
+            foreground=[
+                elm
+                for elm in style.map("Treeview", query_opt="foreground")
+                if elm[:2] != ("!disabled", "!selected")
+            ],
+            background=[
+                elm
+                for elm in style.map("Treeview", query_opt="background")
+                if elm[:2] != ("!disabled", "!selected")
+            ],
+        )
 
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill=BOTH, expand=True)
@@ -110,6 +126,10 @@ class ReminderApp:
         self.tree.column("status", width=110, stretch=False)
         self.tree.column("title", width=280)
         self.tree.pack(fill=BOTH, expand=True)
+        self.tree.tag_configure(STATUS_DONE, foreground="#15803d")
+        self.tree.tag_configure(STATUS_OVERDUE, foreground="#dc2626")
+        self.tree.tag_configure(STATUS_PENDING, foreground="#2563eb")
+        self.tree.tag_configure(STATUS_CANCELLED, foreground="#c2410c")
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._show_selected_details())
         self.tree.bind("<Double-1>", lambda _e: self._show_selected_popup())
 
@@ -193,6 +213,7 @@ class ReminderApp:
                 END,
                 iid=str(reminder.id),
                 values=(reminder.due_at_display, reminder.status, reminder.title),
+                tags=(reminder.status,),
             )
         self._set_details("")
         self.status_var.set(f"Показано: {len(reminders)}")
